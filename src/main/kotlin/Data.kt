@@ -24,6 +24,7 @@ sealed class Rotor(override val wiring: CharArray, val stepping: Char = '\u0000'
     val exitMap = IntArray(wiring.size).apply {
         entryMap.forEachIndexed { index, out ->
             this[out] = index
+
         }
     }
     fun charToPosition(char: Char, ringSetting: Int): Int {
