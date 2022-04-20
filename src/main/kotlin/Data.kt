@@ -19,6 +19,7 @@ sealed class Rotor<Self : Rotor<Self>>(
     companion object {
         val ROTORS by lazy { arrayOf(I, II, III, IV, V, VI, VII, VIII, Beta, Gamma) }
         val NAME_TO_ROTOR by lazy { ROTORS.associateBy { it::class.simpleName ?: "" } }
+        val ROTOR_TO_NAME by lazy { NAME_TO_ROTOR.entries.associate { (k, v) -> v to k } }
 
         fun byName(name: String): Rotor<*> = NAME_TO_ROTOR[name] ?: throw RotorError("Unknown rotor type: $name")
 
@@ -34,30 +35,44 @@ sealed class Rotor<Self : Rotor<Self>>(
         }
     }
 
-    fun blankState() = setDisplay(RotorState(), 'A')
+    fun blankState() = with(RotorState<Self>()) { setDisplay('A') }
 
-    fun setDisplay(state: RotorState<Self>, value: Char): RotorState<Self> {
-        return state.copy(rotations = 0U, displayVal = value)
+    context(RotorState<Self>)
+    fun setDisplay(value: Char): RotorState<Self> {
+        return copy(rotations = 0U, displayVal = value)
     }
 
-    fun signalIn(state: RotorState<Self>, position: Int): Int {
-        val pin = Math.floorMod(position + state.position.toInt(), wiring.size)
+    context(RotorState<Self>)
+    fun setPosition(value: UInt): RotorState<Self> {
+        return copy(rotations = 0U, position = value)
+    }
+
+    context(RotorState<Self>)
+    fun signalIn(signal: Int): Int {
+        val pin = Math.floorMod(signal + position.toInt(), wiring.size)
         val contact = entryMap[pin]
-        return Math.floorMod(contact - state.position.toInt(), wiring.size)
+        return Math.floorMod(contact - position.toInt(), wiring.size)
     }
 
-    fun signalOut(state: RotorState<Self>, position: Int): Int {
-        val contact = Math.floorMod(position + state.position.toInt(), wiring.size)
+    context(RotorState<Self>)
+    fun signalOut(signal: Int): Int {
+        val contact = Math.floorMod(signal + position.toInt(), wiring.size)
         val pin = exitMap[contact]
-        return Math.floorMod(pin - state.position.toInt(), wiring.size)
+        return Math.floorMod(pin - position.toInt(), wiring.size)
     }
 
-    fun notchOverPawl(state: RotorState<Self>) = state.displayVal == stepping || state.displayVal in extraStepping
+    context(RotorState<Self>)
+    val isNotchOverPawl
+        get() = displayVal == stepping || displayVal in extraStepping
 
-    fun rotate(state: RotorState<Self>): RotorState<Self> {
-        return state.copy(position = Math.floorMod(state.position.toInt() + 1, wiring.size).toUInt(), rotations = state.rotations + 1U)
+    context(RotorState<Self>)
+    fun rotate(): RotorState<Self> {
+        return copy(position = Math.floorMod(position.toInt() + 1, wiring.size).toUInt(), rotations = rotations + 1U)
     }
 
+    override fun toString(): String {
+        return ROTOR_TO_NAME[this] ?: super.toString()
+    }
 }
 
 // Display map
@@ -86,7 +101,11 @@ object Beta : Rotor<Beta>("LEYJVCNIXWPBQMDRTAKZGFUHOS")
 object Gamma : Rotor<Gamma>("FSOKANUERHMBTIYCWLQPZXVGJD")
 
 open class CustomRotor(wiring: CharArray, stepping: Char = '\u0000', vararg extraStepping: Char) :
-    Rotor<CustomRotor>(CharArray(wiring.size) { wiring[it].uppercaseChar() }, stepping.uppercaseChar(), *extraStepping) {
+    Rotor<CustomRotor>(
+        CharArray(wiring.size) { wiring[it].uppercaseChar() },
+        stepping.uppercaseChar(),
+        *extraStepping
+    ) {
     constructor(wiring: String, stepping: Char = '\u0000', vararg extraStepping: Char) : this(
         wiring.toCharArray(),
         stepping,
@@ -120,6 +139,18 @@ sealed class Reflector(wiring: CharArray) : CustomRotor(wiring) {
         fun byName(name: String): Reflector = NAME_TO_REFLECTOR[name]
             ?: throw RotorError("Unknown reflector type: $name")
     }
+
+    fun signalIn(signal: Int, unit: Unit = Unit): Int {
+        val pin = Math.floorMod(signal, wiring.size)
+        val contact = entryMap[pin]
+        return Math.floorMod(contact, wiring.size)
+    }
+
+    fun signalOut(signal: Int, unit: Unit = Unit): Int {
+        val contact = Math.floorMod(signal, wiring.size)
+        val pin = exitMap[contact]
+        return Math.floorMod(pin, wiring.size)
+    }
 }
 
 object B : Reflector("YRUHQSLDPXNGOKMIEBFZCWVJAT")
@@ -134,8 +165,9 @@ open class CustomReflector(wiring: CharArray) : Reflector(wiring) {
 
 class PlugboardError(message: String) : Exception(message)
 
-class Plugboard(override val wiring: CharArray) : Wiring {
+class Plugboard(override var wiring: CharArray) : Wiring {
     constructor(wiring: String) : this(wiring.toCharArray())
+
     init {
         /*if(wiring.size > 20) {
             throw PlugboardError("Please specify 10 or less maximum pairs")
@@ -146,7 +178,9 @@ class Plugboard(override val wiring: CharArray) : Wiring {
         fun fromKeySheet(sheetStr: String): Plugboard {
             val charArray = CharArray(DEFAULT_WIRING_LENGTH) { positionToChar(it) }
             for (pairing in sheetStr.split(" ")) {
-                if(pairing.length != 2)
+                if (pairing.isEmpty())
+                    continue
+                if (pairing.length != 2)
                     throw PlugboardError("Invalid pair: $pairing")
                 charArray[charToPosition(pairing[0])] = pairing[1]
                 charArray[charToPosition(pairing[1])] = pairing[0]
